@@ -73,6 +73,30 @@ GENERAL_TERMS = (
     "취업규칙을 제시하거나 교부",
 )
 
+QUERY_EXPANSION_MAP: dict[str, tuple[str, ...]] = {
+    "휴가": ("연차", "연차휴가", "연차유급휴가", "반차", "반일휴가", "보건휴가", "경조휴가", "공가", "병가"),
+    "연차": ("휴가", "연차휴가", "연차유급휴가", "반차", "반일휴가", "보건휴가"),
+    "반차": ("휴가", "반일휴가", "연차", "연차휴가"),
+    "보건휴가": ("휴가", "여성보건휴가", "생리휴가", "보건"),
+    "급여": ("월급", "임금", "연봉", "보수", "수당", "급여지급"),
+    "월급": ("급여", "임금", "보수", "급여지급"),
+    "연봉": ("급여", "임금", "보수", "월급"),
+    "수당": ("급여", "임금", "월급", "연장근로수당", "야간수당", "휴일수당"),
+    "임금": ("급여", "월급", "연봉", "보수", "수당"),
+    "식대": ("복리후생", "급여", "수당", "중식대"),
+    "복리후생": ("식대", "경조사", "지원", "수당"),
+    "퇴직": ("퇴사", "퇴직금", "퇴직급여", "사직"),
+    "퇴사": ("퇴직", "사직", "퇴직금", "퇴직급여"),
+    "징계": ("해고", "경고", "감봉", "정직", "징계처분"),
+    "해고": ("징계", "면직", "권고사직"),
+    "근로시간": ("근무시간", "소정근로시간", "출퇴근", "휴게시간"),
+    "근무시간": ("근로시간", "소정근로시간", "출퇴근", "휴게시간"),
+    "연장근무": ("초과근무", "시간외근무", "연장근로", "야근"),
+    "초과근무": ("연장근무", "시간외근무", "연장근로", "야근"),
+    "출장": ("외근", "여비", "출장비", "숙박비", "교통비"),
+    "출장비": ("출장", "여비", "숙박비", "교통비", "일비"),
+}
+
 
 @dataclass(frozen=True)
 class Chunk:
@@ -91,7 +115,7 @@ def tokenize(text: str) -> list[str]:
 
 
 class PdfKnowledgeBase:
-    def __init__(self, pdf_root: str, chunk_size: int = 1200, chunk_overlap: int = 200) -> None:
+    def __init__(self, pdf_root: str, chunk_size: int = 800, chunk_overlap: int = 150) -> None:
         self.pdf_root = Path(pdf_root)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
@@ -183,6 +207,7 @@ class PdfKnowledgeBase:
         topic_keys: tuple[str, ...],
     ) -> float:
         content_lower = chunk.content.lower()
+        leading_text = content_lower[: min(len(content_lower), 180)]
         unique_tokens = set(query_tokens)
         coverage = sum(1 for token in unique_tokens if token in content_lower)
         exact_hits = sum(content_lower.count(token) for token in unique_tokens)
@@ -190,34 +215,60 @@ class PdfKnowledgeBase:
         direct_bonus = 0.0
         general_penalty = 0.0
         specialized_bonus = 0.0
+        leading_bonus = 0.0
 
         for token in unique_tokens:
-            for hint in KEYWORD_HINTS.get(token, ()): 
+            if token in leading_text:
+                leading_bonus += 3.5
+            for hint in KEYWORD_HINTS.get(token, ()):
                 if hint in content_lower:
                     hint_bonus += 2.0
-            for term in DIRECT_PRIORITY_TERMS.get(token, ()): 
+                if hint.lower() in leading_text:
+                    leading_bonus += 1.5
+            for term in DIRECT_PRIORITY_TERMS.get(token, ()):
                 if term.lower() in content_lower:
                     direct_bonus += 8.0
-            for term in SPECIALIZED_FILTERS.get(token, ()): 
+                if term.lower() in leading_text:
+                    leading_bonus += 3.0
+            for term in SPECIALIZED_FILTERS.get(token, ()):
                 if term.lower() in content_lower:
                     specialized_bonus += 4.0
+                if term.lower() in leading_text:
+                    leading_bonus += 1.5
 
         for topic_key in topic_keys:
-            for hint in KEYWORD_HINTS.get(topic_key, ()): 
+            if topic_key in leading_text:
+                leading_bonus += 4.0
+            for hint in KEYWORD_HINTS.get(topic_key, ()):
                 if hint in content_lower:
                     hint_bonus += 2.0
-            for term in DIRECT_PRIORITY_TERMS.get(topic_key, ()): 
+                if hint.lower() in leading_text:
+                    leading_bonus += 1.5
+            for term in DIRECT_PRIORITY_TERMS.get(topic_key, ()):
                 if term.lower() in content_lower:
                     direct_bonus += 8.0
-            for term in SPECIALIZED_FILTERS.get(topic_key, ()): 
+                if term.lower() in leading_text:
+                    leading_bonus += 3.0
+            for term in SPECIALIZED_FILTERS.get(topic_key, ()):
                 if term.lower() in content_lower:
                     specialized_bonus += 4.0
+                if term.lower() in leading_text:
+                    leading_bonus += 1.5
 
         has_direct_term = direct_bonus > 0
         if not has_direct_term and any(term in content_lower for term in GENERAL_TERMS):
             general_penalty = 8.0
 
-        return bm25_score + (coverage * 2.5) + (exact_hits * 0.5) + hint_bonus + direct_bonus + specialized_bonus - general_penalty
+        return (
+            bm25_score
+            + (coverage * 2.5)
+            + (exact_hits * 0.5)
+            + hint_bonus
+            + direct_bonus
+            + specialized_bonus
+            + leading_bonus
+            - general_penalty
+        )
 
     def _prioritize_direct_matches(self, ranked_indices: list[int], query_tokens: list[str], topic_keys: tuple[str, ...]) -> list[int]:
         priority_terms = self._priority_terms(query_tokens, topic_keys)
@@ -276,26 +327,23 @@ class PdfKnowledgeBase:
     def _expand_query_tokens(self, query_tokens: list[str], topic_keys: tuple[str, ...]) -> list[str]:
         expanded: list[str] = list(query_tokens)
         for token in query_tokens:
-            for hint in KEYWORD_HINTS.get(token, ()): 
-                hint_lower = hint.lower()
-                if hint_lower not in expanded:
-                    expanded.append(hint_lower)
-            for term in DIRECT_PRIORITY_TERMS.get(token, ()): 
-                term_lower = term.lower()
-                if term_lower not in expanded:
-                    expanded.append(term_lower)
+            self._append_unique_terms(expanded, KEYWORD_HINTS.get(token, ()))
+            self._append_unique_terms(expanded, DIRECT_PRIORITY_TERMS.get(token, ()))
+            self._append_unique_terms(expanded, SPECIALIZED_FILTERS.get(token, ()))
+            self._append_unique_terms(expanded, QUERY_EXPANSION_MAP.get(token, ()))
         for topic_key in topic_keys:
-            if topic_key not in expanded:
-                expanded.append(topic_key)
-            for hint in KEYWORD_HINTS.get(topic_key, ()): 
-                hint_lower = hint.lower()
-                if hint_lower not in expanded:
-                    expanded.append(hint_lower)
-            for term in DIRECT_PRIORITY_TERMS.get(topic_key, ()): 
-                term_lower = term.lower()
-                if term_lower not in expanded:
-                    expanded.append(term_lower)
+            self._append_unique_terms(expanded, (topic_key,))
+            self._append_unique_terms(expanded, KEYWORD_HINTS.get(topic_key, ()))
+            self._append_unique_terms(expanded, DIRECT_PRIORITY_TERMS.get(topic_key, ()))
+            self._append_unique_terms(expanded, SPECIALIZED_FILTERS.get(topic_key, ()))
+            self._append_unique_terms(expanded, QUERY_EXPANSION_MAP.get(topic_key, ()))
         return expanded
+
+    def _append_unique_terms(self, expanded: list[str], terms: Iterable[str]) -> None:
+        for term in terms:
+            term_lower = term.lower()
+            if term_lower not in expanded:
+                expanded.append(term_lower)
 
     def _topic_keys(self, query_tokens: list[str]) -> tuple[str, ...]:
         matched_keys: list[str] = []
