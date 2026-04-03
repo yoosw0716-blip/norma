@@ -39,6 +39,7 @@ class Settings:
     openclaw_api_key: str
     openclaw_model: str
     pdf_root: str
+    search_config_path: str
     chunk_size: int
     chunk_overlap: int
     top_k: int
@@ -62,6 +63,7 @@ class Settings:
             openclaw_api_key=os.getenv("OPENCLAW_API_KEY", ""),
             openclaw_model=os.getenv("OPENCLAW_MODEL", "qwen3:14b"),
             pdf_root=os.getenv("PDF_ROOT", "./data/pdfs"),
+            search_config_path=os.getenv("SEARCH_CONFIG_PATH", "./search_config.yml"),
             chunk_size=_int_env("CHUNK_SIZE", 800),
             chunk_overlap=_int_env("CHUNK_OVERLAP", 150),
             top_k=_int_env("TOP_K", 5),

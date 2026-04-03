@@ -4,10 +4,15 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from pypdf import PdfReader
 from rank_bm25 import BM25Okapi
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - import failure depends on runtime environment
+    yaml = None
 
 
 logger = logging.getLogger(__name__)
@@ -15,87 +20,124 @@ TOKEN_PATTERN = re.compile(r"[0-9A-Za-z가-힣]+")
 WHITESPACE_PATTERN = re.compile(r"\s+")
 
 
-KEYWORD_HINTS: dict[str, tuple[str, ...]] = {
-    "연차": ("연차", "연차휴가", "연차유급휴가", "휴가"),
-    "휴가": ("휴가", "연차", "연차휴가", "연차유급휴가"),
-    "수습": ("수습", "수습기간", "시용"),
-    "수습기간": ("수습기간", "수습", "시용"),
-    "시용": ("시용", "수습", "수습기간"),
-    "출장": ("출장", "출장비", "여비", "숙박비", "업무경비"),
-    "출장비": ("출장비", "출장", "여비", "숙박비"),
-    "경비": ("경비", "업무경비", "실비", "교통비"),
-    "업무경비": ("업무경비", "경비", "실비", "교통비"),
-    "연장근무": ("연장근무", "초과근무", "시간외근무", "연장근로"),
-    "초과근무": ("초과근무", "연장근무", "시간외근무", "연장근로"),
-    "퇴직": ("퇴직", "퇴직금", "퇴직급여"),
-    "징계": ("징계", "해고", "표창"),
-    "근로시간": ("근로시간", "소정근로시간", "휴게"),
+DEFAULT_WEIGHTS: dict[str, float] = {
+    "leading_text_bonus": 3.5,
+    "keyword_hint_bonus": 2.0,
+    "keyword_hint_leading_bonus": 1.5,
+    "direct_priority_bonus": 8.0,
+    "direct_priority_leading_bonus": 3.0,
+    "specialized_filter_bonus": 4.0,
+    "specialized_filter_leading_bonus": 1.5,
+    "topic_key_leading_bonus": 4.0,
+    "general_term_penalty": 8.0,
+    "coverage_multiplier": 2.5,
+    "exact_hits_multiplier": 0.5,
 }
 
-DIRECT_PRIORITY_TERMS: dict[str, tuple[str, ...]] = {
-    "연차": ("연차유급휴가", "연차휴가", "연차", "15일", "3년 이상", "25일", "제40조", "제41조"),
-    "휴가": ("연차유급휴가", "연차휴가", "휴가", "15일", "3년 이상", "25일", "제40조", "제41조"),
-    "수습": ("수습기간", "수습", "시용", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"),
-    "수습기간": ("수습기간", "수습", "시용", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"),
-    "시용": ("시용", "수습", "수습기간", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"),
-    "출장": ("출장", "출장비지급규정", "출장비", "여비", "숙박비", "일비", "교통비", "실비"),
-    "출장비": ("출장비지급규정", "출장비", "출장", "여비", "숙박비", "일비", "실비"),
-    "경비": ("업무경비처리규정", "업무경비", "경비", "실비", "교통비", "정산"),
-    "업무경비": ("업무경비처리규정", "업무경비", "경비", "실비", "교통비", "정산"),
-    "연장근무": ("연장근무", "연장근무 지침", "연장근무 업무처리지침", "초과근무", "시간외근무", "수당"),
-    "초과근무": ("초과근무", "연장근무", "시간외근무", "연장근로", "수당"),
-    "퇴직": ("퇴직급여", "퇴직금", "퇴직"),
-    "징계": ("징계", "해고"),
-    "근로시간": ("근로시간", "소정근로시간"),
+DEFAULT_DICTIONARIES: dict[str, Any] = {
+    "KEYWORD_HINTS": {
+        "연차": ["연차", "연차휴가", "연차유급휴가", "휴가"],
+        "휴가": ["휴가", "연차", "연차휴가", "연차유급휴가"],
+        "수습": ["수습", "수습기간", "시용"],
+        "수습기간": ["수습기간", "수습", "시용"],
+        "시용": ["시용", "수습", "수습기간"],
+        "출장": ["출장", "출장비", "여비", "숙박비", "업무경비"],
+        "출장비": ["출장비", "출장", "여비", "숙박비"],
+        "경비": ["경비", "업무경비", "실비", "교통비"],
+        "업무경비": ["업무경비", "경비", "실비", "교통비"],
+        "연장근무": ["연장근무", "초과근무", "시간외근무", "연장근로"],
+        "초과근무": ["초과근무", "연장근무", "시간외근무", "연장근로"],
+        "퇴직": ["퇴직", "퇴직금", "퇴직급여"],
+        "징계": ["징계", "해고", "표창"],
+        "근로시간": ["근로시간", "소정근로시간", "휴게"],
+    },
+    "DIRECT_PRIORITY_TERMS": {
+        "연차": ["연차유급휴가", "연차휴가", "연차", "15일", "3년 이상", "25일", "제40조", "제41조"],
+        "휴가": ["연차유급휴가", "연차휴가", "휴가", "15일", "3년 이상", "25일", "제40조", "제41조"],
+        "수습": ["수습기간", "수습", "시용", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"],
+        "수습기간": ["수습기간", "수습", "시용", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"],
+        "시용": ["시용", "수습", "수습기간", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"],
+        "출장": ["출장", "출장비지급규정", "출장비", "여비", "숙박비", "일비", "교통비", "실비"],
+        "출장비": ["출장비지급규정", "출장비", "출장", "여비", "숙박비", "일비", "실비"],
+        "경비": ["업무경비처리규정", "업무경비", "경비", "실비", "교통비", "정산"],
+        "업무경비": ["업무경비처리규정", "업무경비", "경비", "실비", "교통비", "정산"],
+        "연장근무": ["연장근무", "연장근무 지침", "연장근무 업무처리지침", "초과근무", "시간외근무", "수당"],
+        "초과근무": ["초과근무", "연장근무", "시간외근무", "연장근로", "수당"],
+        "퇴직": ["퇴직급여", "퇴직금", "퇴직"],
+        "징계": ["징계", "해고"],
+        "근로시간": ["근로시간", "소정근로시간"],
+    },
+    "SPECIALIZED_FILTERS": {
+        "연차": ["연차유급휴가", "연차휴가", "15일", "3년 이상", "25일", "제40조", "제41조"],
+        "휴가": ["연차유급휴가", "연차휴가", "15일", "3년 이상", "25일", "제40조", "제41조"],
+        "수습": ["수습기간", "수습", "시용", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"],
+        "수습기간": ["수습기간", "수습", "시용", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"],
+        "시용": ["시용", "수습", "수습기간", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"],
+        "출장": ["출장비지급규정", "출장", "출장비", "여비", "숙박비", "실비"],
+        "출장비": ["출장비지급규정", "출장비", "출장", "여비", "숙박비", "실비"],
+        "경비": ["업무경비처리규정", "업무경비", "경비", "실비", "교통비", "정산"],
+        "업무경비": ["업무경비처리규정", "업무경비", "경비", "실비", "교통비", "정산"],
+        "연장근무": ["연장근무 업무처리지침", "연장근무 지침", "연장근무", "초과근무", "시간외근무", "수당"],
+        "초과근무": ["초과근무", "연장근무", "시간외근무", "연장근로", "수당"],
+        "퇴직": ["퇴직급여", "퇴직금", "퇴직"],
+        "징계": ["징계", "해고"],
+        "근로시간": ["근로시간", "소정근로시간"],
+    },
+    "QUERY_EXPANSION_MAP": {
+        "휴가": ["연차", "연차휴가", "연차유급휴가", "반차", "반일휴가", "보건휴가", "경조휴가", "공가", "병가"],
+        "연차": ["휴가", "연차휴가", "연차유급휴가", "반차", "반일휴가", "보건휴가"],
+        "반차": ["휴가", "반일휴가", "연차", "연차휴가"],
+        "보건휴가": ["휴가", "여성보건휴가", "생리휴가", "보건"],
+        "급여": ["월급", "임금", "연봉", "보수", "수당", "급여지급"],
+        "월급": ["급여", "임금", "보수", "급여지급"],
+        "연봉": ["급여", "임금", "보수", "월급"],
+        "수당": ["급여", "임금", "월급", "연장근로수당", "야간수당", "휴일수당"],
+        "임금": ["급여", "월급", "연봉", "보수", "수당"],
+        "식대": ["복리후생", "급여", "수당", "중식대"],
+        "복리후생": ["식대", "경조사", "지원", "수당"],
+        "퇴직": ["퇴사", "퇴직금", "퇴직급여", "사직"],
+        "퇴사": ["퇴직", "사직", "퇴직금", "퇴직급여"],
+        "징계": ["해고", "경고", "감봉", "정직", "징계처분"],
+        "해고": ["징계", "면직", "권고사직"],
+        "근로시간": ["근무시간", "소정근로시간", "출퇴근", "휴게시간"],
+        "근무시간": ["근로시간", "소정근로시간", "출퇴근", "휴게시간"],
+        "연장근무": ["초과근무", "시간외근무", "연장근로", "야근"],
+        "초과근무": ["연장근무", "시간외근무", "연장근로", "야근"],
+        "출장": ["외근", "여비", "출장비", "숙박비", "교통비"],
+        "출장비": ["출장", "여비", "숙박비", "교통비", "일비"],
+    },
+    "GENERAL_TERMS": [
+        "근로계약",
+        "명확히 제시",
+        "서면",
+        "취업규칙을 제시하거나 교부",
+    ],
 }
 
-SPECIALIZED_FILTERS: dict[str, tuple[str, ...]] = {
-    "연차": ("연차유급휴가", "연차휴가", "15일", "3년 이상", "25일", "제40조", "제41조"),
-    "휴가": ("연차유급휴가", "연차휴가", "15일", "3년 이상", "25일", "제40조", "제41조"),
-    "수습": ("수습기간", "수습", "시용", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"),
-    "수습기간": ("수습기간", "수습", "시용", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"),
-    "시용": ("시용", "수습", "수습기간", "3개월", "제9조", "수습 평가", "본 채용", "채용 취소", "근속년수", "시용된 날"),
-    "출장": ("출장비지급규정", "출장", "출장비", "여비", "숙박비", "실비"),
-    "출장비": ("출장비지급규정", "출장비", "출장", "여비", "숙박비", "실비"),
-    "경비": ("업무경비처리규정", "업무경비", "경비", "실비", "교통비", "정산"),
-    "업무경비": ("업무경비처리규정", "업무경비", "경비", "실비", "교통비", "정산"),
-    "연장근무": ("연장근무 업무처리지침", "연장근무 지침", "연장근무", "초과근무", "시간외근무", "수당"),
-    "초과근무": ("초과근무", "연장근무", "시간외근무", "연장근로", "수당"),
-    "퇴직": ("퇴직급여", "퇴직금", "퇴직"),
-    "징계": ("징계", "해고"),
-    "근로시간": ("근로시간", "소정근로시간"),
-}
 
-GENERAL_TERMS = (
-    "근로계약",
-    "명확히 제시",
-    "서면",
-    "취업규칙을 제시하거나 교부",
-)
+@dataclass(frozen=True)
+class SearchWeights:
+    leading_text_bonus: float
+    keyword_hint_bonus: float
+    keyword_hint_leading_bonus: float
+    direct_priority_bonus: float
+    direct_priority_leading_bonus: float
+    specialized_filter_bonus: float
+    specialized_filter_leading_bonus: float
+    topic_key_leading_bonus: float
+    general_term_penalty: float
+    coverage_multiplier: float
+    exact_hits_multiplier: float
 
-QUERY_EXPANSION_MAP: dict[str, tuple[str, ...]] = {
-    "휴가": ("연차", "연차휴가", "연차유급휴가", "반차", "반일휴가", "보건휴가", "경조휴가", "공가", "병가"),
-    "연차": ("휴가", "연차휴가", "연차유급휴가", "반차", "반일휴가", "보건휴가"),
-    "반차": ("휴가", "반일휴가", "연차", "연차휴가"),
-    "보건휴가": ("휴가", "여성보건휴가", "생리휴가", "보건"),
-    "급여": ("월급", "임금", "연봉", "보수", "수당", "급여지급"),
-    "월급": ("급여", "임금", "보수", "급여지급"),
-    "연봉": ("급여", "임금", "보수", "월급"),
-    "수당": ("급여", "임금", "월급", "연장근로수당", "야간수당", "휴일수당"),
-    "임금": ("급여", "월급", "연봉", "보수", "수당"),
-    "식대": ("복리후생", "급여", "수당", "중식대"),
-    "복리후생": ("식대", "경조사", "지원", "수당"),
-    "퇴직": ("퇴사", "퇴직금", "퇴직급여", "사직"),
-    "퇴사": ("퇴직", "사직", "퇴직금", "퇴직급여"),
-    "징계": ("해고", "경고", "감봉", "정직", "징계처분"),
-    "해고": ("징계", "면직", "권고사직"),
-    "근로시간": ("근무시간", "소정근로시간", "출퇴근", "휴게시간"),
-    "근무시간": ("근로시간", "소정근로시간", "출퇴근", "휴게시간"),
-    "연장근무": ("초과근무", "시간외근무", "연장근로", "야근"),
-    "초과근무": ("연장근무", "시간외근무", "연장근로", "야근"),
-    "출장": ("외근", "여비", "출장비", "숙박비", "교통비"),
-    "출장비": ("출장", "여비", "숙박비", "교통비", "일비"),
-}
+
+@dataclass(frozen=True)
+class SearchConfig:
+    weights: SearchWeights
+    keyword_hints: dict[str, tuple[str, ...]]
+    direct_priority_terms: dict[str, tuple[str, ...]]
+    specialized_filters: dict[str, tuple[str, ...]]
+    query_expansion_map: dict[str, tuple[str, ...]]
+    general_terms: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -114,11 +156,83 @@ def tokenize(text: str) -> list[str]:
     return TOKEN_PATTERN.findall(text.lower())
 
 
+def _normalize_mapping(raw_mapping: Any) -> dict[str, tuple[str, ...]]:
+    if not isinstance(raw_mapping, dict):
+        return {}
+
+    normalized: dict[str, tuple[str, ...]] = {}
+    for key, values in raw_mapping.items():
+        if isinstance(key, str) and isinstance(values, list):
+            normalized[key] = tuple(str(value) for value in values)
+    return normalized
+
+
+def _normalize_general_terms(raw_terms: Any) -> tuple[str, ...]:
+    if not isinstance(raw_terms, list):
+        return ()
+    return tuple(str(term) for term in raw_terms)
+
+
+def _default_search_config() -> SearchConfig:
+    return SearchConfig(
+        weights=SearchWeights(**DEFAULT_WEIGHTS),
+        keyword_hints=_normalize_mapping(DEFAULT_DICTIONARIES["KEYWORD_HINTS"]),
+        direct_priority_terms=_normalize_mapping(DEFAULT_DICTIONARIES["DIRECT_PRIORITY_TERMS"]),
+        specialized_filters=_normalize_mapping(DEFAULT_DICTIONARIES["SPECIALIZED_FILTERS"]),
+        query_expansion_map=_normalize_mapping(DEFAULT_DICTIONARIES["QUERY_EXPANSION_MAP"]),
+        general_terms=_normalize_general_terms(DEFAULT_DICTIONARIES["GENERAL_TERMS"]),
+    )
+
+
+def load_search_config(config_path: str | Path | None) -> SearchConfig:
+    default_config = _default_search_config()
+    if not config_path:
+        return default_config
+
+    path = Path(config_path)
+    if not path.exists():
+        logger.warning("Search config file not found: %s. Falling back to built-in defaults.", path)
+        return default_config
+
+    if yaml is None:
+        logger.warning("PyYAML is not installed. Falling back to built-in search defaults.")
+        return default_config
+
+    try:
+        raw_config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        logger.exception("Failed to load search config from %s. Falling back to defaults.", path)
+        return default_config
+
+    raw_weights = raw_config.get("weights", {}) if isinstance(raw_config, dict) else {}
+    weights_data = {
+        key: float(raw_weights.get(key, getattr(default_config.weights, key)))
+        for key in DEFAULT_WEIGHTS
+    }
+
+    raw_dictionaries = raw_config.get("dictionaries", {}) if isinstance(raw_config, dict) else {}
+    return SearchConfig(
+        weights=SearchWeights(**weights_data),
+        keyword_hints=_normalize_mapping(raw_dictionaries.get("KEYWORD_HINTS", default_config.keyword_hints)),
+        direct_priority_terms=_normalize_mapping(raw_dictionaries.get("DIRECT_PRIORITY_TERMS", default_config.direct_priority_terms)),
+        specialized_filters=_normalize_mapping(raw_dictionaries.get("SPECIALIZED_FILTERS", default_config.specialized_filters)),
+        query_expansion_map=_normalize_mapping(raw_dictionaries.get("QUERY_EXPANSION_MAP", default_config.query_expansion_map)),
+        general_terms=_normalize_general_terms(raw_dictionaries.get("GENERAL_TERMS", list(default_config.general_terms))),
+    )
+
+
 class PdfKnowledgeBase:
-    def __init__(self, pdf_root: str, chunk_size: int = 800, chunk_overlap: int = 150) -> None:
+    def __init__(
+        self,
+        pdf_root: str,
+        chunk_size: int = 800,
+        chunk_overlap: int = 150,
+        search_config_path: str | Path | None = None,
+    ) -> None:
         self.pdf_root = Path(pdf_root)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.search_config = load_search_config(search_config_path)
         self._chunks: list[Chunk] = []
         self._tokenized_chunks: list[list[str]] = []
         self._bm25: BM25Okapi | None = None
@@ -158,22 +272,17 @@ class PdfKnowledgeBase:
             self._ranking_score(self._chunks[idx], scores[idx], expanded_query, topic_keys)
             for idx in range(len(scores))
         ]
-        ranked_indices = sorted(
-            range(len(scores)),
-            key=lambda idx: ranking_scores[idx],
-            reverse=True,
-        )
+        ranked_indices = sorted(range(len(scores)), key=lambda idx: ranking_scores[idx], reverse=True)
 
         ranked_indices = self._prioritize_direct_matches(ranked_indices, expanded_query, topic_keys)
         ranked_indices = self._filter_to_specialized_matches(ranked_indices, expanded_query, topic_keys)
 
         target_count = max(top_k, min(len(ranked_indices), len(topic_keys) + 1))
-
         results: list[Chunk] = []
         seen_chunk_ids: set[str] = set()
         seen_sources: set[str] = set()
 
-        # For multi-policy questions, prefer pulling from different source documents first.
+        # 여러 규정이 섞인 질문은 서로 다른 문서를 먼저 보여줘야 답변 근거가 풍부해진다.
         if len(topic_keys) >= 2:
             for idx in ranked_indices:
                 if ranking_scores[idx] <= 0:
@@ -206,6 +315,7 @@ class PdfKnowledgeBase:
         query_tokens: list[str],
         topic_keys: tuple[str, ...],
     ) -> float:
+        weights = self.search_config.weights
         content_lower = chunk.content.lower()
         leading_text = content_lower[: min(len(content_lower), 180)]
         unique_tokens = set(query_tokens)
@@ -217,52 +327,59 @@ class PdfKnowledgeBase:
         specialized_bonus = 0.0
         leading_bonus = 0.0
 
+        # 조항 제목이나 항목명은 앞부분에 몰리는 경우가 많아, 선두 매치를 별도로 우대한다.
         for token in unique_tokens:
             if token in leading_text:
-                leading_bonus += 3.5
-            for hint in KEYWORD_HINTS.get(token, ()):
-                if hint in content_lower:
-                    hint_bonus += 2.0
-                if hint.lower() in leading_text:
-                    leading_bonus += 1.5
-            for term in DIRECT_PRIORITY_TERMS.get(token, ()):
-                if term.lower() in content_lower:
-                    direct_bonus += 8.0
-                if term.lower() in leading_text:
-                    leading_bonus += 3.0
-            for term in SPECIALIZED_FILTERS.get(token, ()):
-                if term.lower() in content_lower:
-                    specialized_bonus += 4.0
-                if term.lower() in leading_text:
-                    leading_bonus += 1.5
+                leading_bonus += weights.leading_text_bonus
+            for hint in self.search_config.keyword_hints.get(token, ()):
+                hint_lower = hint.lower()
+                if hint_lower in content_lower:
+                    hint_bonus += weights.keyword_hint_bonus
+                if hint_lower in leading_text:
+                    leading_bonus += weights.keyword_hint_leading_bonus
+            for term in self.search_config.direct_priority_terms.get(token, ()):
+                term_lower = term.lower()
+                if term_lower in content_lower:
+                    direct_bonus += weights.direct_priority_bonus
+                if term_lower in leading_text:
+                    leading_bonus += weights.direct_priority_leading_bonus
+            for term in self.search_config.specialized_filters.get(token, ()):
+                term_lower = term.lower()
+                if term_lower in content_lower:
+                    specialized_bonus += weights.specialized_filter_bonus
+                if term_lower in leading_text:
+                    leading_bonus += weights.specialized_filter_leading_bonus
 
         for topic_key in topic_keys:
             if topic_key in leading_text:
-                leading_bonus += 4.0
-            for hint in KEYWORD_HINTS.get(topic_key, ()):
-                if hint in content_lower:
-                    hint_bonus += 2.0
-                if hint.lower() in leading_text:
-                    leading_bonus += 1.5
-            for term in DIRECT_PRIORITY_TERMS.get(topic_key, ()):
-                if term.lower() in content_lower:
-                    direct_bonus += 8.0
-                if term.lower() in leading_text:
-                    leading_bonus += 3.0
-            for term in SPECIALIZED_FILTERS.get(topic_key, ()):
-                if term.lower() in content_lower:
-                    specialized_bonus += 4.0
-                if term.lower() in leading_text:
-                    leading_bonus += 1.5
+                leading_bonus += weights.topic_key_leading_bonus
+            for hint in self.search_config.keyword_hints.get(topic_key, ()):
+                hint_lower = hint.lower()
+                if hint_lower in content_lower:
+                    hint_bonus += weights.keyword_hint_bonus
+                if hint_lower in leading_text:
+                    leading_bonus += weights.keyword_hint_leading_bonus
+            for term in self.search_config.direct_priority_terms.get(topic_key, ()):
+                term_lower = term.lower()
+                if term_lower in content_lower:
+                    direct_bonus += weights.direct_priority_bonus
+                if term_lower in leading_text:
+                    leading_bonus += weights.direct_priority_leading_bonus
+            for term in self.search_config.specialized_filters.get(topic_key, ()):
+                term_lower = term.lower()
+                if term_lower in content_lower:
+                    specialized_bonus += weights.specialized_filter_bonus
+                if term_lower in leading_text:
+                    leading_bonus += weights.specialized_filter_leading_bonus
 
         has_direct_term = direct_bonus > 0
-        if not has_direct_term and any(term in content_lower for term in GENERAL_TERMS):
-            general_penalty = 8.0
+        if not has_direct_term and any(term in content_lower for term in self.search_config.general_terms):
+            general_penalty = weights.general_term_penalty
 
         return (
             bm25_score
-            + (coverage * 2.5)
-            + (exact_hits * 0.5)
+            + (coverage * weights.coverage_multiplier)
+            + (exact_hits * weights.exact_hits_multiplier)
             + hint_bonus
             + direct_bonus
             + specialized_bonus
@@ -270,7 +387,12 @@ class PdfKnowledgeBase:
             - general_penalty
         )
 
-    def _prioritize_direct_matches(self, ranked_indices: list[int], query_tokens: list[str], topic_keys: tuple[str, ...]) -> list[int]:
+    def _prioritize_direct_matches(
+        self,
+        ranked_indices: list[int],
+        query_tokens: list[str],
+        topic_keys: tuple[str, ...],
+    ) -> list[int]:
         priority_terms = self._priority_terms(query_tokens, topic_keys)
         if not priority_terms:
             return ranked_indices
@@ -288,13 +410,20 @@ class PdfKnowledgeBase:
             return direct_match_indices + other_indices
         return ranked_indices
 
-    def _filter_to_specialized_matches(self, ranked_indices: list[int], query_tokens: list[str], topic_keys: tuple[str, ...]) -> list[int]:
+    def _filter_to_specialized_matches(
+        self,
+        ranked_indices: list[int],
+        query_tokens: list[str],
+        topic_keys: tuple[str, ...],
+    ) -> list[int]:
         specialized_terms = self._specialized_terms(query_tokens, topic_keys)
         if not specialized_terms:
             return ranked_indices
 
         specialized_indices = [
-            idx for idx in ranked_indices if any(term.lower() in self._chunks[idx].content.lower() for term in specialized_terms)
+            idx
+            for idx in ranked_indices
+            if any(term.lower() in self._chunks[idx].content.lower() for term in specialized_terms)
         ]
         if specialized_indices:
             return specialized_indices
@@ -303,40 +432,35 @@ class PdfKnowledgeBase:
     def _priority_terms(self, query_tokens: list[str], topic_keys: tuple[str, ...]) -> tuple[str, ...]:
         ordered_terms: list[str] = []
         for token in query_tokens:
-            for term in DIRECT_PRIORITY_TERMS.get(token, ()): 
-                if term not in ordered_terms:
-                    ordered_terms.append(term)
+            self._append_unique_terms(ordered_terms, self.search_config.direct_priority_terms.get(token, ()))
         for topic_key in topic_keys:
-            for term in DIRECT_PRIORITY_TERMS.get(topic_key, ()): 
-                if term not in ordered_terms:
-                    ordered_terms.append(term)
+            self._append_unique_terms(ordered_terms, self.search_config.direct_priority_terms.get(topic_key, ()))
         return tuple(ordered_terms)
 
     def _specialized_terms(self, query_tokens: list[str], topic_keys: tuple[str, ...]) -> tuple[str, ...]:
         ordered_terms: list[str] = []
         for token in query_tokens:
-            for term in SPECIALIZED_FILTERS.get(token, ()): 
-                if term not in ordered_terms:
-                    ordered_terms.append(term)
+            self._append_unique_terms(ordered_terms, self.search_config.specialized_filters.get(token, ()))
         for topic_key in topic_keys:
-            for term in SPECIALIZED_FILTERS.get(topic_key, ()): 
-                if term not in ordered_terms:
-                    ordered_terms.append(term)
+            self._append_unique_terms(ordered_terms, self.search_config.specialized_filters.get(topic_key, ()))
         return tuple(ordered_terms)
 
     def _expand_query_tokens(self, query_tokens: list[str], topic_keys: tuple[str, ...]) -> list[str]:
         expanded: list[str] = list(query_tokens)
+
+        # 검색어를 규정 문서에서 자주 쓰는 표현으로 넓혀 BM25 recall을 보강한다.
         for token in query_tokens:
-            self._append_unique_terms(expanded, KEYWORD_HINTS.get(token, ()))
-            self._append_unique_terms(expanded, DIRECT_PRIORITY_TERMS.get(token, ()))
-            self._append_unique_terms(expanded, SPECIALIZED_FILTERS.get(token, ()))
-            self._append_unique_terms(expanded, QUERY_EXPANSION_MAP.get(token, ()))
+            self._append_unique_terms(expanded, self.search_config.keyword_hints.get(token, ()))
+            self._append_unique_terms(expanded, self.search_config.direct_priority_terms.get(token, ()))
+            self._append_unique_terms(expanded, self.search_config.specialized_filters.get(token, ()))
+            self._append_unique_terms(expanded, self.search_config.query_expansion_map.get(token, ()))
+
         for topic_key in topic_keys:
             self._append_unique_terms(expanded, (topic_key,))
-            self._append_unique_terms(expanded, KEYWORD_HINTS.get(topic_key, ()))
-            self._append_unique_terms(expanded, DIRECT_PRIORITY_TERMS.get(topic_key, ()))
-            self._append_unique_terms(expanded, SPECIALIZED_FILTERS.get(topic_key, ()))
-            self._append_unique_terms(expanded, QUERY_EXPANSION_MAP.get(topic_key, ()))
+            self._append_unique_terms(expanded, self.search_config.keyword_hints.get(topic_key, ()))
+            self._append_unique_terms(expanded, self.search_config.direct_priority_terms.get(topic_key, ()))
+            self._append_unique_terms(expanded, self.search_config.specialized_filters.get(topic_key, ()))
+            self._append_unique_terms(expanded, self.search_config.query_expansion_map.get(topic_key, ()))
         return expanded
 
     def _append_unique_terms(self, expanded: list[str], terms: Iterable[str]) -> None:
@@ -347,7 +471,11 @@ class PdfKnowledgeBase:
 
     def _topic_keys(self, query_tokens: list[str]) -> tuple[str, ...]:
         matched_keys: list[str] = []
-        known_keys = set(KEYWORD_HINTS) | set(DIRECT_PRIORITY_TERMS) | set(SPECIALIZED_FILTERS)
+        known_keys = (
+            set(self.search_config.keyword_hints)
+            | set(self.search_config.direct_priority_terms)
+            | set(self.search_config.specialized_filters)
+        )
         for token in query_tokens:
             for key in known_keys:
                 if key in token or token in key:
@@ -397,14 +525,10 @@ class PdfKnowledgeBase:
             start = max(0, end - self.chunk_overlap)
 
     def _pdf_paths(self) -> list[Path]:
-        pdf_paths = sorted(
+        return sorted(
             [path for path in self.pdf_root.iterdir() if path.is_file() and path.suffix.lower() == ".pdf"],
             key=lambda path: path.name.lower(),
         )
-        return pdf_paths
 
     def _build_fingerprint(self, pdf_paths: list[Path]) -> tuple[tuple[str, int, int], ...]:
-        return tuple(
-            (path.name, int(path.stat().st_mtime), path.stat().st_size) for path in pdf_paths
-        )
-
+        return tuple((path.name, int(path.stat().st_mtime), path.stat().st_size) for path in pdf_paths)
