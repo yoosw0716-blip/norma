@@ -1,0 +1,12 @@
+[Unit]
+Description=Quantum Notice Collector and Briefing Generator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=norma
+Group=norma
+WorkingDirectory=/home/norma/quantum_notice_app
+EnvironmentFile=/home/norma/quantum_notice_app/.env
+ExecStart=/bin/bash /home/norma/quantum_notice_app/run_all.sh

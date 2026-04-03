@@ -1,0 +1,16 @@
+[Unit]
+Description=Quantum Notice Collector and Briefing Service
+After=network.target
+
+[Service]
+Type=oneshot
+User=norma
+WorkingDirectory=/home/norma/quantum_notice_app
+# 통합 실행 스크립트를 실행합니다.
+ExecStart=/bin/bash /home/norma/quantum_notice_app/run_all.sh
+# 로그를 남겨 문제가 생겼을 때 확인하기 쉽게 합니다.
+StandardOutput=append:/home/norma/quantum_notice_app/execution.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

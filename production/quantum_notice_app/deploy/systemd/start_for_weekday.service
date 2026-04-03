@@ -1,0 +1,6 @@
+[Unit]
+Description=Start weekday services for the week
+
+[Service]
+Type=oneshot
+ExecStart=/home/norma/quantum_notice_app/scripts/manage_services.sh start

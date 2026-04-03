@@ -1,0 +1,36 @@
+  1. 프로젝트 디렉토리 이동 및 가상환경 활성화
+
+
+   # 1. 앱이 설치된 폴더로 이동 후 가상환경 활성화 (경로가 다르면 수정하세요)
+   cd ~/quantum_notice_app
+   source venv/bin/activate
+  (성공하면 프롬프트 앞에 (venv)라는 표시가 나타납니다.)
+
+  2. 최신 의존성 확인 (필요 시)
+  만약 google-genai 등의 라이브러리가 설치되지 않았다면 한 번 더 실행해 주세요.
+
+
+   1 pip install requests beautifulsoup4 python-dateutil playwright google-genai
+   2 playwright install --with-deps chromium
+
+
+  3. 통합 테스트 실행 (수집 + 브리핑)
+  방금 수정한 양자내성암호 필터링과 슬랙 알림 양식이 잘 작동하는지 확인하기 위해 아래 명령어를 실행합니다.
+
+
+   python3 quantum_notice_app.py --env-file .env run --max-pages 2 --use-playwright && python3
+     generate_quantum_briefing.py --env-file .env --slack
+
+
+  체크 리스트:
+   1. 터미널: [수집] KISA: X건, [알림] 슬랙 메시지 전송 성공, ✅ 슬랙 브리핑 전송 완료 메시지가 차례로 뜨는지
+      확인하세요.
+   2. 슬랙 (첫 번째 메시지):
+       * 상단에 수집 시각과 10개 기관 목록이 잘 나오는지?
+       * 현재 접수 중인 공고들이 리스트로 나오며, 새로 발견된 것이 있다면 🆕 배지가 붙어있는지?
+       * 공고 상세 링크가 홈페이지 주소가 아닌 실제 상세 페이지인지?
+   3. 슬랙 (두 번째 메시지): Gemini가 작성한 공고 요약 브리핑이 잘 오는지?
+   
+   
+ ETC # 1. 기존 데이터 삭제 (이미 수집된 공고에 포함되어 출력되지 않을경우)
+   rm data/quantum_notices.json

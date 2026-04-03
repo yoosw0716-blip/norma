@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop weekday services for the weekend
+
+[Service]
+Type=oneshot
+ExecStart=/home/norma/quantum_notice_app/scripts/manage_services.sh stop

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Quantum Notice Collector on Monday and Thursday
+
+[Timer]
+OnCalendar=Mon,Thu *-*-* 09:00:00
+Persistent=true
+Unit=quantum-notice.service
+
+[Install]
+WantedBy=timers.target

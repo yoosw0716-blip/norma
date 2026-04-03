@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Quantum Notice Service on Mon and Thu at 9AM
+
+[Timer]
+# 월요일(Mon), 목요일(Thu) 09:00:00에 실행되도록 설정
+OnCalendar=Mon,Thu *-*-* 09:00:00
+# 서버 중단 등으로 실행 시간을 놓쳤을 때, 부팅 후 즉시 실행 시도
+Persistent=true
+# 연결할 서비스 파일 명칭
+Unit=quantum-notice.service
+
+[Install]
+WantedBy=timers.target

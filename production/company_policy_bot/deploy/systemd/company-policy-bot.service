@@ -1,0 +1,17 @@
+[Unit]
+Description=Company Policy Slack Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=norma
+WorkingDirectory=/home/norma/company_policy_bot
+EnvironmentFile=/home/norma/company_policy_bot/.env
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/norma/company_policy_bot/.venv/bin/python /home/norma/company_policy_bot/main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

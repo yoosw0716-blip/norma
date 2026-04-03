@@ -1,0 +1,11 @@
+[Unit]
+Description=Run start_for_weekday.service every Monday at 1 AM
+Requires=start_for_weekday.service
+
+[Timer]
+Unit=start_for_weekday.service
+OnCalendar=Mon 01:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

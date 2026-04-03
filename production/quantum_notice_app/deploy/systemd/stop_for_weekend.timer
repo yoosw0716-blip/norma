@@ -1,0 +1,11 @@
+[Unit]
+Description=Run stop_for_weekend.service every Saturday at 1 AM
+Requires=stop_for_weekend.service
+
+[Timer]
+Unit=stop_for_weekend.service
+OnCalendar=Sat 01:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

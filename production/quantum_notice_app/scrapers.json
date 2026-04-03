@@ -1,0 +1,91 @@
+[
+    {
+        "name": "iitp",
+        "base_url": "https://www.iitp.kr",
+        "pagination_url_template": "https://www.iitp.kr/web/lay1/program/S1T44C51/iris/list.do?sort=latest&cpage={page}&rows=100",
+        "pagination_params": null,
+        "force_playwright": true,
+        "max_pages_override": null,
+        "extractor_fn": "_extract_iitp_links"
+    },
+    {
+        "name": "bizinfo",
+        "base_url": "https://www.bizinfo.go.kr",
+        "pagination_url_template": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/list.do",
+        "pagination_params": {
+            "searchKeyword": "\uc591\uc790",
+            "pageIndex": "{page}"
+        },
+        "force_playwright": false,
+        "max_pages_override": null,
+        "extractor_fn": "extract_links"
+    },
+    {
+        "name": "kisa",
+        "base_url": "https://www.kisa.or.kr",
+        "pagination_url_template": "https://www.kisa.or.kr/401",
+        "pagination_params": {
+            "page": "{page}"
+        },
+        "force_playwright": true,
+        "max_pages_override": null,
+        "extractor_fn": "_extract_kisa_links"
+    },
+    {
+        "name": "nia",
+        "base_url": "https://www.nia.or.kr",
+        "pagination_url_template": "https://www.nia.or.kr/site/nia_kor/ex/bbs/List.do",
+        "pagination_params": {
+            "cbIdx": 99285,
+            "pageIndex": "{page}"
+        },
+        "force_playwright": false,
+        "max_pages_override": null,
+        "extractor_fn": "extract_links"
+    },
+    {
+        "name": "iris",
+        "base_url": "https://www.iris.go.kr",
+        "pagination_url_template": "https://www.iris.go.kr/contents/retrieveBsnsAncmList.do",
+        "pagination_params": {
+            "searchWord": "\uc591\uc790",
+            "pageIndex": "{page}"
+        },
+        "force_playwright": true,
+        "max_pages_override": null,
+        "extractor_fn": "extract_links"
+    },
+    {
+        "name": "ntis",
+        "base_url": "https://www.ntis.go.kr",
+        "pagination_url_template": "https://www.ntis.go.kr/rndgate/eg/un/ra/mng.do?searchCondition=title&searchWord=%EC%96%91%EC%9E%90&pageIndex={page}",
+        "pagination_params": null,
+        "force_playwright": true,
+        "max_pages_override": null,
+        "extractor_fn": "extract_links"
+    },
+    {
+        "name": "unist",
+        "base_url": "https://research.unist.ac.kr",
+        "pagination_url_template": "https://research.unist.ac.kr/",
+        "pagination_params": {
+            "s": "\uc591\uc790",
+            "paged": "{page}"
+        },
+        "force_playwright": false,
+        "max_pages_override": null,
+        "extractor_fn": "extract_links"
+    },
+    {
+        "name": "nrf",
+        "base_url": "https://www.nrf.re.kr",
+        "pagination_url_template": "https://www.nrf.re.kr/page/362",
+        "pagination_params": {
+            "pageNum": "{page}",
+            "keyword": "\uc591\uc790"
+        },
+        "force_playwright": true,
+        "max_pages_override": null,
+        "extractor_fn": "extract_links"
+    }
+]
